@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# http://o.mengue.free.fr/
+
+
+function _jpegrot
+{
+        typeset angle="$1"
+        typeset f="$2"
+        [[ "x$2" = *.[jJ][pP]*[gG] ]] || return 0
+        typeset b=$(expr "x$f" : 'x\(.*\)\....$')
+        typeset new="$b.tmp.JPG"
+        typeset prv="$b.prv.JPG"
+        typeset thb="$b.thb.JPG"
+        exiftool -b -PreviewImage -w ".prv.JPG" -execute -b -ThumbnailImage -w ".thb.JPG" -common_args "$f"
+        jpegtran -rotate "$angle" -optimize -perfect -copy all "$f" > "$new"
+        mv -f -- "$new" "$f"
+        jpegtran -rotate "$angle" -optimize -perfect -copy all "$prv" | exiftool -overwrite_original "$f" '-PreviewImage<=-' > /dev/null
+        jpegtran -rotate "$angle" -optimize -perfect -copy all "$thb" | exiftool -overwrite_original "$f" '-ThumbnailImage<=-' '-DateTimeOriginal>FileModifyDate' > /dev/null
+        rm -f -- "$prv" "$thb"
+}
+
+typeset angle="$1"
+shift
+for f in "$@"
+do
+        _jpegrot "$angle" "$f"
+done
