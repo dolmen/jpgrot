@@ -1,28 +1,89 @@
-#!/bin/bash
+#!/usr/bin/perl
 
-# http://o.mengue.free.fr/
+use strict;
+use warnings;
+require v5.8.0;
+use Image::ExifTool;
+use IPC::Open2;
 
+my $title = 'Rotation JPEG sans perte';
 
-function _jpegrot
-{
-        typeset angle="$1"
-        typeset f="$2"
-        [[ "x$2" = *.[jJ][pP]*[gG] ]] || return 0
-        typeset b=$(expr "x$f" : 'x\(.*\)\....$')
-        typeset new="$b.tmp.JPG"
-        typeset prv="$b.prv.JPG"
-        typeset thb="$b.thb.JPG"
-        exiftool -b -PreviewImage -w ".prv.JPG" -execute -b -ThumbnailImage -w ".thb.JPG" -common_args "$f"
-        jpegtran -rotate "$angle" -optimize -perfect -copy all "$f" > "$new"
-        mv -f -- "$new" "$f"
-        jpegtran -rotate "$angle" -optimize -perfect -copy all "$prv" | exiftool -overwrite_original "$f" '-PreviewImage<=-' > /dev/null
-        jpegtran -rotate "$angle" -optimize -perfect -copy all "$thb" | exiftool -overwrite_original "$f" '-ThumbnailImage<=-' '-DateTimeOriginal>FileModifyDate' > /dev/null
-        rm -f -- "$prv" "$thb"
+my $angle;
+if ($0 =~ /(90|180|270)/) {
+    $angle = $1;
+} elsif ($ARGV[0] eq '-a' && $#ARGV > 1) {
+    shift @ARGV;
+    $angle = (360 + shift @ARGV) % 360;
+} else {
+    #$angle = `zenity --title "$title" --scale --text "Angle de rotation :" --value=90 --min-value=90 --max-value=270 --step=90`;
+    $angle = `zenity --title "$title" --list --text "Angle de rotation :" --column "Degrés" 90 180 270`;
+    $? and exit 1;
 }
 
-typeset angle="$1"
-shift
-for f in "$@"
-do
-        _jpegrot "$angle" "$f"
-done
+#system('zenity', '--info', '--title', $title, '--text', "Angle : $angle");
+#$angle || exit 1;
+
+
+my @files;
+if ($ENV{NAUTILUS_SCRIPT_SELECTED_FILE_PATHS}) {
+    @files = split /\n/, $ENV{NAUTILUS_SCRIPT_SELECTED_FILE_PATHS};
+} else {
+    @files = @ARGV;
+}
+
+@files = grep /\.jpe?g$/i, @files;
+
+#system 'zenity', '--list', '--column', 'Fichier', @files;
+
+
+my $exifTool = new Image::ExifTool;
+my $exifTool2 = new Image::ExifTool;
+
+for my $file (@files) {
+    next unless -f $file && -r $file;
+    my $pid = open(my $rotated, '-|', 'jpegtran', '-rotate', $angle, '-optimize', '-perfect', '-copy', 'all', $file);
+    binmode($rotated);
+    my $img = do { local ($/); <$rotated> };
+    close $rotated;
+    waitpid $pid, 0;
+    # $fields = ['ImageWidth', 'ImageHeight', 'ThumbnailImage', 'PreviewImage'];
+    my $info = $exifTool->ImageInfo(\$img);
+    #print map {$_.$/} sort keys %$info;
+    my $portrait = $$info{ImageHeight} > $$info{ImageWidth};
+    #system 'zenity', '--info', '--text', "$file($$info{ImageWidth}x$$info{ImageHeight}): ".($portrait ? 'portrait' : 'paysage');
+    for my $subimg (('ThumbnailImage', 'PreviewImage')) {
+        next unless exists $$info{$subimg};
+        my $ref_img = $$info{$subimg};
+        my $info = $exifTool2->ImageInfo($ref_img, ['ImageWidth', 'ImageHeight']);
+        if ($angle == 180 || ($$info{ImageHeight} > $$info{ImageWidth}) != $portrait) {
+            #print "Rotation $subimg\n";
+            my ($jpegtran_in, $jpegtran_out);
+            my $pid = open2($jpegtran_out, $jpegtran_in,
+                            'jpegtran',
+                            '-rotate', $angle,
+                            '-optimize',
+                            '-perfect',
+                            '-copy', 'all'
+                            );
+            binmode $jpegtran_in;
+            binmode $jpegtran_out;
+            syswrite $jpegtran_in, $$ref_img;
+            close $jpegtran_in;
+            my $img = do { local ($/); <$jpegtran_out> };
+            close $jpegtran_out;
+            waitpid $pid, 0;
+            # jpegtran adds a JFIF group. We drop it.
+            # Ne marche pas pour l'instant
+            $exifTool2->ExtractInfo(\$img);
+            $exifTool2->SetNewValue('JFIF'); # Delete JFIF group
+            $exifTool2->WriteInfo(\$img);
+
+            $exifTool->SetNewValue($subimg, \$img);
+        }
+    }
+    $exifTool->SetNewValue('FileModifyDate', $$info{CreateDate});
+    #$file = substr($file, 0, -4)."-$angle.jpg";
+    unlink $file;
+    $exifTool->WriteInfo(\$img, $file) || warn "$!";
+    $exifTool->SetFileModifyDate($file);
+}
