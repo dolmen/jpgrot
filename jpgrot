@@ -1,4 +1,6 @@
 #!/usr/bin/perl
+#Title=JPEG rotate
+#Title[fr]=Rotation JPEG sans perte
 
 use strict;
 use warnings;
@@ -20,8 +22,13 @@ if ($0 =~ /(90|180|270)/) {
     $? and exit 1;
 }
 
-#system('zenity', '--info', '--title', $title, '--text', "Angle : $angle");
+shift @ARGV if $#ARGV > 0 && $ARGV[0] eq '--';
+
+#system('zenity', '--info', '--title', $title, '--text', "Fichier: $ARGV[0]\nAngle : $angle");
 #$angle || exit 1;
+
+#print "$angle\n";
+
 
 
 my @files;
@@ -53,37 +60,39 @@ for my $file (@files) {
     #system 'zenity', '--info', '--text', "$file($$info{ImageWidth}x$$info{ImageHeight}): ".($portrait ? 'portrait' : 'paysage');
     for my $subimg (('ThumbnailImage', 'PreviewImage')) {
         next unless exists $$info{$subimg};
-        my $ref_img = $$info{$subimg};
-        my $info = $exifTool2->ImageInfo($ref_img, ['ImageWidth', 'ImageHeight']);
-        if ($angle == 180 || ($$info{ImageHeight} > $$info{ImageWidth}) != $portrait) {
-            #print "Rotation $subimg\n";
-            my ($jpegtran_in, $jpegtran_out);
-            my $pid = open2($jpegtran_out, $jpegtran_in,
+	my $ref_img = $$info{$subimg};
+	my $info = $exifTool2->ImageInfo($ref_img, ['ImageWidth', 'ImageHeight']);
+	if ($angle == 180 || ($$info{ImageHeight} > $$info{ImageWidth}) != $portrait) {
+	    #print "Rotation $subimg\n";
+	    my ($jpegtran_in, $jpegtran_out);
+	    my $pid = open2($jpegtran_out, $jpegtran_in,
                             'jpegtran',
                             '-rotate', $angle,
                             '-optimize',
                             '-perfect',
                             '-copy', 'all'
                             );
-            binmode $jpegtran_in;
-            binmode $jpegtran_out;
-            syswrite $jpegtran_in, $$ref_img;
-            close $jpegtran_in;
-            my $img = do { local ($/); <$jpegtran_out> };
-            close $jpegtran_out;
-            waitpid $pid, 0;
-            # jpegtran adds a JFIF group. We drop it.
-            # Ne marche pas pour l'instant
-            $exifTool2->ExtractInfo(\$img);
-            $exifTool2->SetNewValue('JFIF'); # Delete JFIF group
-            $exifTool2->WriteInfo(\$img);
+	    binmode $jpegtran_in;
+	    binmode $jpegtran_out;
+	    syswrite $jpegtran_in, $$ref_img;
+	    close $jpegtran_in;
+	    my $img = do { local ($/); <$jpegtran_out> };
+	    close $jpegtran_out;
+	    waitpid $pid, 0;
+	    # jpegtran adds a JFIF group. We drop it.
+	    # Ne marche pas pour l'instant
+	    $exifTool2->ExtractInfo(\$img);
+	    #$exifTool2->SetNewValue('JFIF'); # Delete JFIF group
+	    $exifTool2->WriteInfo(\$img);
 
-            $exifTool->SetNewValue($subimg, \$img);
-        }
+	    $exifTool->SetNewValue($subimg, \$img);
+	}
     }
     $exifTool->SetNewValue('FileModifyDate', $$info{CreateDate});
     #$file = substr($file, 0, -4)."-$angle.jpg";
+    #print $file, $/;
     unlink $file;
     $exifTool->WriteInfo(\$img, $file) || warn "$!";
     $exifTool->SetFileModifyDate($file);
 }
+
